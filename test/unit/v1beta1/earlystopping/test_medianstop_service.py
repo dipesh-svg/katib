@@ -21,7 +21,10 @@ import grpc_testing
 import utils
 
 from pkg.apis.manager.v1beta1.python import api_pb2
-from pkg.earlystopping.v1beta1.medianstop.service import APISERVER_TIMEOUT, MedianStopService
+from pkg.earlystopping.v1beta1.medianstop.service import (
+    APISERVER_TIMEOUT,
+    MedianStopService,
+)
 
 
 class TestMedianStop(unittest.TestCase):
@@ -63,7 +66,9 @@ class TestMedianStop(unittest.TestCase):
         )
 
         self.assertIsInstance(reply, api_pb2.SetTrialStatusReply)
-        patch_call = self.median_stop_service.api_instance.patch_namespaced_custom_object_status.call_args
+        patch_call = (
+            self.median_stop_service.api_instance.patch_namespaced_custom_object_status.call_args
+        )
         self.assertTrue(patch_call.kwargs["async_req"])
         patch_thread.get.assert_called_once_with(APISERVER_TIMEOUT)
         self.assertEqual(trial["status"]["conditions"][0]["type"], "EarlyStopped")

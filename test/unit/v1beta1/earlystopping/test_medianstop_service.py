@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import multiprocessing
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import grpc
 import grpc_testing
@@ -30,13 +31,62 @@ class TestMedianStop(unittest.TestCase):
         self.mock_sum = patcher.start()
         self.addCleanup(patcher.stop)
 
+        self.median_stop_service = MedianStopService()
         servicers = {
-            api_pb2.DESCRIPTOR.services_by_name['EarlyStopping']: MedianStopService(
-            )
+            api_pb2.DESCRIPTOR.services_by_name['EarlyStopping']: self.median_stop_service
         }
 
         self.test_server = grpc_testing.server_from_dictionary(
             servicers, grpc_testing.strict_real_time())
+
+    def _prepare_trial_status_update(self):
+        trial = {"status": {"conditions": []}}
+        get_thread = Mock()
+        get_thread.get.return_value = trial
+        patch_thread = Mock()
+
+        self.median_stop_service.api_instance = Mock()
+        self.median_stop_service.api_instance.get_namespaced_custom_object.return_value = (
+            get_thread
+        )
+        self.median_stop_service.api_instance.patch_namespaced_custom_object_status.return_value = (
+            patch_thread
+        )
+
+        return trial, patch_thread
+
+    def test_set_trial_status_waits_for_patch(self):
+        trial, patch_thread = self._prepare_trial_status_update()
+
+        reply = self.median_stop_service.SetTrialStatus(
+            api_pb2.SetTrialStatusRequest(trial_name="test-trial"), None
+        )
+
+        self.assertIsInstance(reply, api_pb2.SetTrialStatusReply)
+        patch_thread.get.assert_called_once_with(120)
+        self.assertEqual(trial["status"]["conditions"][0]["type"], "EarlyStopped")
+
+    def test_set_trial_status_raises_when_patch_fails(self):
+        _, patch_thread = self._prepare_trial_status_update()
+        patch_thread.get.side_effect = RuntimeError("conflict")
+
+        with self.assertRaisesRegex(
+            Exception, "Update status for Trial: test-trial.*conflict"
+        ):
+            self.median_stop_service.SetTrialStatus(
+                api_pb2.SetTrialStatusRequest(trial_name="test-trial"), None
+            )
+
+    def test_set_trial_status_raises_when_patch_times_out(self):
+        _, patch_thread = self._prepare_trial_status_update()
+        patch_thread.get.side_effect = multiprocessing.TimeoutError
+
+        with self.assertRaisesRegex(
+            Exception, "Timeout trying to update Katib Trial status"
+        ):
+            self.median_stop_service.SetTrialStatus(
+                api_pb2.SetTrialStatusRequest(trial_name="test-trial"), None
+            )
 
     def test_validate_early_stopping_settings(self):
         # Valid cases
